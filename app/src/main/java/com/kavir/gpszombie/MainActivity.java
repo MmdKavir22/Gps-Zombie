@@ -9,6 +9,7 @@ import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -23,6 +24,7 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
+
         web = new WebView(this);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -30,10 +32,19 @@ public class MainActivity extends Activity {
         s.setDatabaseEnabled(true);
         s.setAllowFileAccess(true);
         s.setAllowContentAccess(true);
-        web.setWebChromeClient(new WebChromeClient());
+        s.setGeolocationEnabled(true);
+
         web.setWebViewClient(new WebViewClient());
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                callback.invoke(origin, true, false);
+            }
+        });
+
         web.addJavascriptInterface(new Bridge(), "AndroidGPS");
         setContentView(web);
+
         lm = (LocationManager)getSystemService(LOCATION_SERVICE);
         web.loadUrl("file:///android_asset/game.html");
     }
@@ -41,7 +52,10 @@ public class MainActivity extends Activity {
     public void startGameLocation() {
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
             checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_LOCATION);
+            requestPermissions(
+                new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION},
+                REQ_LOCATION
+            );
             sendStatus("permission_wait");
             return;
         }
@@ -54,7 +68,7 @@ public class MainActivity extends Activity {
 
         if (!gps && !network) {
             sendStatus("location_off");
-            startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
+            try { startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)); } catch (Exception ignored) {}
             return;
         }
 
@@ -76,8 +90,8 @@ public class MainActivity extends Activity {
             if (network) lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1000L, 1f, listener);
 
             Location last = null;
-            if (gps) last = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-            if (last == null && network) last = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+            if (network) last = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+            if (last == null && gps) last = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
             if (last != null) send(last);
         } catch (SecurityException e) {
             sendStatus("permission_denied");
@@ -85,8 +99,14 @@ public class MainActivity extends Activity {
 
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             try {
-                if (gps) lm.getCurrentLocation(LocationManager.GPS_PROVIDER, null, getMainExecutor(), l -> { if (l != null) send(l); });
-                if (network) lm.getCurrentLocation(LocationManager.NETWORK_PROVIDER, null, getMainExecutor(), l -> { if (l != null) send(l); });
+                if (network) {
+                    lm.getCurrentLocation(LocationManager.NETWORK_PROVIDER, null, getMainExecutor(),
+                        l -> { if (l != null) send(l); });
+                }
+                if (gps) {
+                    lm.getCurrentLocation(LocationManager.GPS_PROVIDER, null, getMainExecutor(),
+                        l -> { if (l != null) send(l); });
+                }
             } catch (SecurityException e) {
                 sendStatus("permission_denied");
             }
@@ -102,22 +122,44 @@ public class MainActivity extends Activity {
 
     private void sendStatus(String status) {
         if (web == null) return;
-        runOnUiThread(() -> web.evaluateJavascript("window.gpsStatus && window.gpsStatus('" + status + "')", null));
+        runOnUiThread(() ->
+            web.evaluateJavascript(
+                "window.gpsStatus && window.gpsStatus('" + status + "')", null
+            )
+        );
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode != REQ_LOCATION) return;
+
         boolean ok = false;
-        for (int r : results) if (r == PackageManager.PERMISSION_GRANTED) ok = true;
+        for (int r : results) {
+            if (r == PackageManager.PERMISSION_GRANTED) {
+                ok = true;
+                break;
+            }
+        }
+
         if (ok) startGameLocation();
         else sendStatus("permission_denied");
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (web != null) web.onResume();
+    }
+
+    @Override protected void onPause() {
+        if (web != null) web.onPause();
+        super.onPause();
     }
 
     @Override protected void onDestroy() {
         if (listener != null && lm != null) {
             try { lm.removeUpdates(listener); } catch (Exception ignored) {}
         }
+        if (web != null) web.destroy();
         super.onDestroy();
     }
 
