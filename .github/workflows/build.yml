@@ -11,6 +11,6 @@ jobs:
       - name: Install SDK
         run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
       - name: Build debug APK
-        run: chmod +x gradlew && ./gradlew assembleDebug
+        run: gradle assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with: { name: Gps-Zombie-debug, path: app/build/outputs/apk/debug/app-debug.apk }
